@@ -1,20 +1,19 @@
 'use client'
 
 import { useState, useMemo } from "react";
-import { Search, Plus, Minus, Loader2, ChevronDown, ChevronUp, PackagePlus, ArrowDownLeft, Filter, Check, Box, Pencil, X, StickyNote, Trash2 } from "lucide-react"; 
+import { Search, Plus, Minus, Loader2, ChevronDown, ChevronUp, PackagePlus, ArrowDownLeft, Filter, Check, Box, Pencil, X, StickyNote, Trash2, Tags } from "lucide-react"; 
 import { updateItemQuantity, updateItemDetails, deleteItem } from "@/actions/items";
-import AddItemForm from "./AddItemForm";
+import AddItemForm, { CATEGORY_CONFIG } from "./AddItemForm"; // <--- Import konfigurace barev
 
-// Typ je teď krásně jednoduchý, bez loans
 type Item = { 
   id: string | number; 
   name: string; 
   quantity: number; 
   box: string | null; 
   note: string | null;
+  category: string | null; // <--- NOVÉ
 };
 
-// Zmizela volba "Jen moje výpůjčky"
 const SORT_OPTIONS = [
   { value: 'available', label: 'Dostupné nejdřív' },
   { value: 'unavailable', label: 'Nedostupné nejdřív' },
@@ -26,11 +25,11 @@ function normalizeText(text: string) {
     return text.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
 }
 
-// Odebrán currentUser z props
 export default function ItemList({ initialItems }: { initialItems: Item[] }) {
   const [search, setSearch] = useState("");
   const [sortBy, setSortBy] = useState("available");
   const [selectedBox, setSelectedBox] = useState<string | null>(null);
+  const [selectedCategory, setSelectedCategory] = useState<string | null>(null); // <--- Filtr kategorie
   
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [amount, setAmount] = useState<number | string>(1);
@@ -39,19 +38,17 @@ export default function ItemList({ initialItems }: { initialItems: Item[] }) {
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
 
   const [editingId, setEditingId] = useState<string | null>(null);
-  const [editValues, setEditValues] = useState({ name: "", box: "", note: "" });
+  const [editValues, setEditValues] = useState({ name: "", box: "", note: "", category: "" });
 
   const uniqueBoxes = useMemo(() => {
-    const boxes = initialItems
-      .map(i => i.box)
-      .filter((b): b is string => typeof b === 'string' && b.trim() !== "");
+    const boxes = initialItems.map(i => i.box).filter((b): b is string => typeof b === 'string' && b.trim() !== "");
     return Array.from(new Set(boxes)).sort();
   }, [initialItems]);
 
   const startEdit = (e: React.MouseEvent, item: Item) => {
     e.stopPropagation();
     setEditingId(item.id.toString());
-    setEditValues({ name: item.name, box: item.box || "", note: item.note || "" });
+    setEditValues({ name: item.name, box: item.box || "", note: item.note || "", category: item.category || "" });
     setExpandedId(item.id.toString());
   };
 
@@ -63,7 +60,7 @@ export default function ItemList({ initialItems }: { initialItems: Item[] }) {
   const saveEdit = async (e: React.MouseEvent, itemId: string) => {
     e.stopPropagation();
     setIsProcessing(true);
-    await updateItemDetails(itemId, editValues.name, editValues.box, editValues.note);
+    await updateItemDetails(itemId, editValues.name, editValues.box, editValues.note, editValues.category);
     setEditingId(null);
     setIsProcessing(false);
   };
@@ -89,13 +86,12 @@ export default function ItemList({ initialItems }: { initialItems: Item[] }) {
     if (!search) return true;
     const searchTerms = normalizeText(search).split(" ").filter(t => t.length > 0);
     const normalizedName = normalizeText(item.name);
-    return searchTerms.every(term => {
-        return normalizedName.startsWith(term) || normalizedName.includes(" " + term);
-    });
+    return searchTerms.every(term => normalizedName.startsWith(term) || normalizedName.includes(" " + term));
   });
 
   const filteredItems = searchedItems.filter((item) => {
     if (selectedBox && item.box !== selectedBox) return false;
+    if (selectedCategory && item.category !== selectedCategory) return false; // Aplikace filtru
     return true;
   });
 
@@ -103,21 +99,17 @@ export default function ItemList({ initialItems }: { initialItems: Item[] }) {
     const aIsAvailable = a.quantity > 0;
     const bIsAvailable = b.quantity > 0;
     switch (sortBy) {
-      case "available": 
-        if (aIsAvailable && !bIsAvailable) return -1; if (!aIsAvailable && bIsAvailable) return 1; return a.name.localeCompare(b.name);
-      case "unavailable": 
-        if (!aIsAvailable && bIsAvailable) return -1; if (aIsAvailable && !bIsAvailable) return 1; return a.name.localeCompare(b.name);
+      case "available": if (aIsAvailable && !bIsAvailable) return -1; if (!aIsAvailable && bIsAvailable) return 1; return a.name.localeCompare(b.name);
+      case "unavailable": if (!aIsAvailable && bIsAvailable) return -1; if (aIsAvailable && !bIsAvailable) return 1; return a.name.localeCompare(b.name);
       case "name_asc": return a.name.localeCompare(b.name);
       case "name_desc": return b.name.localeCompare(a.name);
       default: return 0;
     }
   });
 
-  // Logika zjednodušena jen na Přidat/Ubrat
   const handleAction = async (actionType: 'add' | 'remove', itemId: string, itemName: string) => {
     const finalAmount = typeof amount === 'string' ? parseInt(amount) : amount;
     if (!finalAmount || finalAmount <= 0) return alert("Množství musí být větší než 0");
-
     if (actionType === 'add' && !confirm(`Opravdu chceš PŘIDAT ${finalAmount} ks k položce "${itemName}"?`)) return;
     if (actionType === 'remove' && !confirm(`Opravdu chceš ODEBRAT ${finalAmount} ks od položky "${itemName}"?`)) return;
 
@@ -126,15 +118,9 @@ export default function ItemList({ initialItems }: { initialItems: Item[] }) {
       if (actionType === 'add') await updateItemQuantity(itemId, finalAmount);
       else if (actionType === 'remove') await updateItemQuantity(itemId, -finalAmount);
       setAmount(1);
-    } catch (error) {
-      console.error(error);
-      alert("Chyba při zpracování.");
-    } finally {
-      setIsProcessing(false);
-    }
+    } catch (error) { console.error(error); alert("Chyba při zpracování."); } finally { setIsProcessing(false); }
   };
 
-  // Znovu přidána funkce pro smazání
   const handleDelete = async (itemId: string, itemName: string) => {
       if (!confirm(`Opravdu chceš úplně smazat položku "${itemName}"?`)) return;
       setIsProcessing(true);
@@ -168,7 +154,6 @@ export default function ItemList({ initialItems }: { initialItems: Item[] }) {
             <div className="relative">
                 <button onClick={() => setIsDropdownOpen(!isDropdownOpen)} className="h-full flex items-center gap-2 px-4 bg-white text-slate-700 shadow-2xl rounded-2xl transition-all active:scale-95 hover:bg-slate-50 border-2 border-transparent hover:border-slate-100">
                    <Filter className="w-5 h-5 text-slate-700" />
-                   <span className="hidden sm:block text-xs font-bold max-w-[100px] truncate">{SORT_OPTIONS.find(o => o.value === sortBy)?.label}</span>
                    <ChevronDown className={`w-4 h-4 text-slate-400 transition-transform ${isDropdownOpen ? 'rotate-180' : ''}`} />
                 </button>
                 {isDropdownOpen && (
@@ -191,12 +176,24 @@ export default function ItemList({ initialItems }: { initialItems: Item[] }) {
             </button>
           </div>
 
+          {/* === NOVÉ: FILTR KATEGORIÍ (Barevné štítky) === */}
+          <div className="flex gap-2 overflow-x-auto pb-2 scrollbar-hide -mx-1 px-1">
+              <button onClick={() => setSelectedCategory(null)} className={`px-3 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap transition-colors border ${selectedCategory === null ? 'bg-slate-800 text-white border-slate-800' : 'bg-white text-slate-500 border-slate-200 hover:bg-slate-100'}`}>Vše</button>
+              {Object.entries(CATEGORY_CONFIG).map(([key, config]) => (
+                  <button key={key} onClick={() => setSelectedCategory(selectedCategory === key ? null : key)} className={`px-3 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap flex items-center gap-1.5 transition-colors border ${selectedCategory === key ? `${config.bg} ${config.text} ${config.border} shadow-sm` : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'}`}>
+                      <div className={`w-2 h-2 rounded-full ${config.dot}`}></div>
+                      {config.label}
+                  </button>
+              ))}
+          </div>
+
+          {/* Filtr Boxů pod kategoriemi */}
           {uniqueBoxes.length > 0 && (
-            <div className="flex gap-2 overflow-x-auto pb-2 scrollbar-hide -mx-1 px-1">
-                <button onClick={() => setSelectedBox(null)} className={`px-3 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap transition-colors border ${selectedBox === null ? 'bg-slate-800 text-white border-slate-800' : 'bg-white text-slate-500 border-slate-200 hover:bg-slate-100'}`}>Vše</button>
+            <div className="flex gap-2 overflow-x-auto pb-2 scrollbar-hide -mx-1 px-1 mt-1">
+                <div className="flex items-center gap-1 pl-1 pr-2 text-slate-400"><Box className="w-3 h-3"/></div>
+                <button onClick={() => setSelectedBox(null)} className={`px-3 py-1 rounded-lg text-[10px] font-bold whitespace-nowrap transition-colors border ${selectedBox === null ? 'bg-slate-300 text-slate-800 border-slate-300' : 'bg-transparent text-slate-400 border-slate-200 hover:bg-slate-200'}`}>Všechna místa</button>
                 {uniqueBoxes.map(box => (
-                    <button key={box} onClick={() => setSelectedBox(selectedBox === box ? null : box)} className={`px-3 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap flex items-center gap-1.5 transition-colors border ${selectedBox === box ? 'bg-blue-600 text-white border-blue-600 shadow-md shadow-blue-200' : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'}`}>
-                        <Box className="w-3 h-3" />
+                    <button key={box} onClick={() => setSelectedBox(selectedBox === box ? null : box)} className={`px-3 py-1 rounded-lg text-[10px] font-bold whitespace-nowrap transition-colors border ${selectedBox === box ? 'bg-blue-100 text-blue-700 border-blue-200' : 'bg-transparent text-slate-500 border-slate-200 hover:bg-slate-100'}`}>
                         {box}
                     </button>
                 ))}
@@ -208,6 +205,7 @@ export default function ItemList({ initialItems }: { initialItems: Item[] }) {
         {sortedItems.map((item) => {
           const isExpanded = expandedId === item.id.toString();
           const isEditing = editingId === item.id.toString();
+          const catConfig = item.category ? CATEGORY_CONFIG[item.category] : null; // Načtení barev kategorie pro položku
 
           const borderClass = isExpanded 
             ? "border-blue-500 ring-4 ring-blue-500/10 z-10 relative shadow-xl scale-[1.02]" 
@@ -227,15 +225,28 @@ export default function ItemList({ initialItems }: { initialItems: Item[] }) {
                         <div className="flex flex-col gap-2" onClick={(e) => e.stopPropagation()}>
                             <input value={editValues.name} onChange={(e) => setEditValues({...editValues, name: e.target.value})} className="font-bold text-slate-800 bg-slate-50 border border-blue-300 rounded-lg px-2 py-1 text-sm w-full outline-none focus:ring-2 focus:ring-blue-200" placeholder="Název" autoFocus />
                             <div className="flex items-center gap-2">
-                                <span className="text-[10px] font-bold uppercase text-slate-400">Box:</span>
+                                <span className="text-[10px] font-bold uppercase text-slate-400">Kat:</span>
+                                <select value={editValues.category} onChange={(e) => setEditValues({...editValues, category: e.target.value})} className="bg-slate-50 border border-blue-300 rounded-lg px-2 py-0.5 text-xs outline-none focus:ring-2 focus:ring-blue-200">
+                                    <option value="">Žádná</option>
+                                    {Object.entries(CATEGORY_CONFIG).map(([key, config]) => <option key={key} value={key}>{config.label}</option>)}
+                                </select>
+                                <span className="text-[10px] font-bold uppercase text-slate-400 ml-1">Box:</span>
                                 <input value={editValues.box} onChange={(e) => setEditValues({...editValues, box: e.target.value})} className="font-bold text-slate-800 bg-slate-50 border border-blue-300 rounded-lg px-2 py-0.5 text-xs w-20 outline-none focus:ring-2 focus:ring-blue-200" placeholder="Box" />
                             </div>
                         </div>
                     ) : (
                         <>
                             <h3 className="font-bold text-slate-800 leading-tight truncate pr-2">{item.name}</h3>
-                            <div className="flex gap-2 mt-1 items-center">
+                            <div className="flex gap-2 mt-1 items-center flex-wrap">
                                 <span className={`text-xs font-bold ${item.quantity > 0 ? 'text-slate-500' : 'text-red-500'}`}>Skladem: {item.quantity} ks</span>
+                                
+                                {/* === BAREVNÝ ŠTÍTEK U POLOŽKY === */}
+                                {catConfig && (
+                                    <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded-md border flex items-center gap-1 ${catConfig.bg} ${catConfig.text} ${catConfig.border}`}>
+                                        <div className={`w-1.5 h-1.5 rounded-full ${catConfig.dot}`}></div>
+                                        {catConfig.label}
+                                    </span>
+                                )}
                             </div>
                         </>
                     )}
@@ -274,8 +285,6 @@ export default function ItemList({ initialItems }: { initialItems: Item[] }) {
                         <div className="grid grid-cols-3 gap-2 mb-4">
                             <button onClick={() => handleAction('add', item.id.toString(), item.name)} className="flex flex-col items-center justify-center gap-1 bg-emerald-50 border-2 border-emerald-100 hover:bg-emerald-100 text-emerald-700 p-2 rounded-xl transition-colors active:scale-95"><Plus className="w-5 h-5 stroke-[3px]" /><span className="text-[9px] font-black uppercase">Přidat ks</span></button>
                             <button onClick={() => handleAction('remove', item.id.toString(), item.name)} disabled={item.quantity < (typeof amount === 'string' ? 0 : amount)} className="flex flex-col items-center justify-center gap-1 bg-rose-50 border-2 border-rose-100 hover:bg-rose-100 text-rose-700 p-2 rounded-xl transition-colors active:scale-95 disabled:opacity-50 disabled:grayscale"><Minus className="w-5 h-5 stroke-[3px]" /><span className="text-[9px] font-black uppercase">Ubrat ks</span></button>
-                            
-                            {/* Tlačítko pro úplné smazání položky (místo původního půjčování) */}
                             <button onClick={() => handleDelete(item.id.toString(), item.name)} className="flex flex-col items-center justify-center gap-1 bg-red-50 border-2 border-red-100 hover:bg-red-100 text-red-600 p-2 rounded-xl transition-colors active:scale-95"><Trash2 className="w-5 h-5 stroke-[3px]" /><span className="text-[9px] font-black uppercase">Smazat věc</span></button>
                         </div>
                     )}
