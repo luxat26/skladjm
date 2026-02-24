@@ -1,39 +1,33 @@
 'use client'
 
 import { useState, useMemo } from "react";
-import { Search, Plus, Minus, User, Loader2, ChevronDown, ChevronUp, PackagePlus, ArrowUpRight, ArrowDownLeft, Filter, Check, Box, Pencil, X, StickyNote, PackageOpen, Undo2 } from "lucide-react"; 
-import { borrowItems, returnItemsFromBorrower, updateItemQuantity, updateItemDetails, borrowEntireBox, returnEntireBox } from "@/actions/items"; // <--- NOVÉ IMPORTY
+import { Search, Plus, Minus, Loader2, ChevronDown, ChevronUp, PackagePlus, ArrowDownLeft, Filter, Check, Box, Pencil, X, StickyNote, Trash2 } from "lucide-react"; 
+import { updateItemQuantity, updateItemDetails, deleteItem } from "@/actions/items";
 import AddItemForm from "./AddItemForm";
 
-type Loan = { 
-  id: string | number; 
-  borrower_name: string; 
-  quantity: number; 
-  borrowed_at: string; 
-};
-
+// Typ je teď krásně jednoduchý, bez loans
 type Item = { 
   id: string | number; 
   name: string; 
   quantity: number; 
   box: string | null; 
   note: string | null;
-  loans: Loan[] 
 };
 
+// Zmizela volba "Jen moje výpůjčky"
 const SORT_OPTIONS = [
   { value: 'available', label: 'Dostupné nejdřív' },
   { value: 'unavailable', label: 'Nedostupné nejdřív' },
   { value: 'name_asc', label: 'Od A do Z' },
   { value: 'name_desc', label: 'Od Z do A' },
-  { value: 'my_items', label: 'Jen moje výpůjčky' },
 ];
 
 function normalizeText(text: string) {
     return text.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
 }
 
-export default function ItemList({ initialItems, currentUser }: { initialItems: Item[], currentUser: string }) {
+// Odebrán currentUser z props
+export default function ItemList({ initialItems }: { initialItems: Item[] }) {
   const [search, setSearch] = useState("");
   const [sortBy, setSortBy] = useState("available");
   const [selectedBox, setSelectedBox] = useState<string | null>(null);
@@ -44,7 +38,6 @@ export default function ItemList({ initialItems, currentUser }: { initialItems: 
   const [isAdding, setIsAdding] = useState(false);
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
 
-  // === STAVY PRO EDITACI ===
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editValues, setEditValues] = useState({ name: "", box: "", note: "" });
 
@@ -54,59 +47,6 @@ export default function ItemList({ initialItems, currentUser }: { initialItems: 
       .filter((b): b is string => typeof b === 'string' && b.trim() !== "");
     return Array.from(new Set(boxes)).sort();
   }, [initialItems]);
-
-  // --- NOVÉ: LOGIKA PRO BOX PANEL ---
-  // Spočítáme statistiky pro aktuálně vybraný box
-  const boxStats = useMemo(() => {
-    if (!selectedBox) return null;
-    
-    const itemsInBox = initialItems.filter(i => i.box === selectedBox);
-    const totalItems = itemsInBox.length;
-    // Položky, které jsou alespoň částečně skladem
-    const availableItemsCount = itemsInBox.filter(i => i.quantity > 0).length;
-    // Položky, kde mám já alespoň něco půjčeno
-    const myBorrowedItemsCount = itemsInBox.filter(i => 
-        i.loans.some(l => l.borrower_name.toLowerCase() === currentUser.toLowerCase())
-    ).length;
-
-    return { totalItems, availableItemsCount, myBorrowedItemsCount, itemsInBox };
-  }, [selectedBox, initialItems, currentUser]);
-
-  const handleBorrowEntireBox = async () => {
-    if (!selectedBox || !boxStats) return;
-    if (!confirm(`Opravdu si chceš půjčit vše dostupné z boxu "${selectedBox}"?`)) return;
-
-    setIsProcessing(true);
-    const result = await borrowEntireBox(selectedBox, currentUser);
-    setIsProcessing(false);
-
-    if (result.error) {
-        alert(result.error);
-    } else {
-        // Logika Solution A: Zobrazíme hlášku o výsledku
-        let msg = `✅ Úspěšně půjčeno ${result.borrowedCount} položek.`;
-        if (result.missingCount && result.missingCount > 0) {
-            msg += `\n\n⚠️ ${result.missingCount} položek nebylo k dispozici (jsou už půjčené).`;
-        }
-        alert(msg);
-    }
-  };
-
-  const handleReturnEntireBox = async () => {
-    if (!selectedBox) return;
-    if (!confirm(`Vrátit vše, co máš půjčené z boxu "${selectedBox}"?`)) return;
-
-    setIsProcessing(true);
-    const result = await returnEntireBox(selectedBox, currentUser);
-    setIsProcessing(false);
-
-    if (result.error) {
-        alert(result.error);
-    } else {
-        alert(`✅ Vráceno vše z boxu "${selectedBox}".`);
-    }
-  };
-  // ----------------------------------
 
   const startEdit = (e: React.MouseEvent, item: Item) => {
     e.stopPropagation();
@@ -155,13 +95,7 @@ export default function ItemList({ initialItems, currentUser }: { initialItems: 
   });
 
   const filteredItems = searchedItems.filter((item) => {
-    if (sortBy === 'my_items') {
-        const hasMyLoan = item.loans.some(l => l.borrower_name.toLowerCase() === currentUser.toLowerCase() && l.quantity > 0);
-        if (!hasMyLoan) return false;
-    }
-    if (selectedBox) {
-        if (item.box !== selectedBox) return false;
-    }
+    if (selectedBox && item.box !== selectedBox) return false;
     return true;
   });
 
@@ -175,12 +109,12 @@ export default function ItemList({ initialItems, currentUser }: { initialItems: 
         if (!aIsAvailable && bIsAvailable) return -1; if (aIsAvailable && !bIsAvailable) return 1; return a.name.localeCompare(b.name);
       case "name_asc": return a.name.localeCompare(b.name);
       case "name_desc": return b.name.localeCompare(a.name);
-      case "my_items": return a.name.localeCompare(b.name);
       default: return 0;
     }
   });
 
-  const handleAction = async (actionType: 'add' | 'remove' | 'borrow' | 'return', itemId: string, itemName: string) => {
+  // Logika zjednodušena jen na Přidat/Ubrat
+  const handleAction = async (actionType: 'add' | 'remove', itemId: string, itemName: string) => {
     const finalAmount = typeof amount === 'string' ? parseInt(amount) : amount;
     if (!finalAmount || finalAmount <= 0) return alert("Množství musí být větší než 0");
 
@@ -191,8 +125,6 @@ export default function ItemList({ initialItems, currentUser }: { initialItems: 
     try {
       if (actionType === 'add') await updateItemQuantity(itemId, finalAmount);
       else if (actionType === 'remove') await updateItemQuantity(itemId, -finalAmount);
-      else if (actionType === 'borrow') await borrowItems(currentUser, { [itemId]: finalAmount });
-      else if (actionType === 'return') await returnItemsFromBorrower(currentUser, { [itemId]: finalAmount });
       setAmount(1);
     } catch (error) {
       console.error(error);
@@ -200,6 +132,14 @@ export default function ItemList({ initialItems, currentUser }: { initialItems: 
     } finally {
       setIsProcessing(false);
     }
+  };
+
+  // Znovu přidána funkce pro smazání
+  const handleDelete = async (itemId: string, itemName: string) => {
+      if (!confirm(`Opravdu chceš úplně smazat položku "${itemName}"?`)) return;
+      setIsProcessing(true);
+      await deleteItem(itemId);
+      setIsProcessing(false);
   };
 
   const toggleExpand = (id: string) => {
@@ -218,17 +158,16 @@ export default function ItemList({ initialItems, currentUser }: { initialItems: 
 
       <AddItemForm isOpen={isAdding} onClose={() => setIsAdding(false)} existingBoxes={uniqueBoxes} />
 
-      {/* HLAVNÍ LIŠTA */}
       <div className="sticky top-0 z-50 bg-[#F1F5F9] pt-5 pb-2">
-          {/* ... Search bar a tlačítka (beze změny) ... */}
           <div className="flex gap-2 items-stretch h-[65px] mb-3">
             <div className="relative flex-1 shadow-2xl rounded-2xl bg-white border-2 border-transparent focus-within:border-blue-100 transition-all">
               <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
               <input placeholder="Hledat..." value={search} onChange={(e) => setSearch(e.target.value)} className="w-full pl-11 pr-4 h-full bg-transparent border-none rounded-2xl text-base font-medium focus:outline-none placeholder:text-slate-400 text-slate-800" />
             </div>
+            
             <div className="relative">
                 <button onClick={() => setIsDropdownOpen(!isDropdownOpen)} className="h-full flex items-center gap-2 px-4 bg-white text-slate-700 shadow-2xl rounded-2xl transition-all active:scale-95 hover:bg-slate-50 border-2 border-transparent hover:border-slate-100">
-                   {sortBy === 'my_items' ? <User className="w-5 h-5 text-slate-700" /> : <Filter className="w-5 h-5 text-slate-700" />}
+                   <Filter className="w-5 h-5 text-slate-700" />
                    <span className="hidden sm:block text-xs font-bold max-w-[100px] truncate">{SORT_OPTIONS.find(o => o.value === sortBy)?.label}</span>
                    <ChevronDown className={`w-4 h-4 text-slate-400 transition-transform ${isDropdownOpen ? 'rotate-180' : ''}`} />
                 </button>
@@ -246,12 +185,12 @@ export default function ItemList({ initialItems, currentUser }: { initialItems: 
                     </>
                 )}
             </div>
+
             <button onClick={() => setIsAdding(true)} className="bg-blue-600 hover:bg-blue-700 text-white w-[60px] h-[60px] rounded-2xl shadow-2xl shadow-blue-200 active:scale-95 transition-all flex items-center justify-center shrink-0">
                 <Plus className="w-7 h-7 stroke-[3px]" />
             </button>
           </div>
 
-          {/* FILTR BOXŮ */}
           {uniqueBoxes.length > 0 && (
             <div className="flex gap-2 overflow-x-auto pb-2 scrollbar-hide -mx-1 px-1">
                 <button onClick={() => setSelectedBox(null)} className={`px-3 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap transition-colors border ${selectedBox === null ? 'bg-slate-800 text-white border-slate-800' : 'bg-white text-slate-500 border-slate-200 hover:bg-slate-100'}`}>Vše</button>
@@ -265,61 +204,10 @@ export default function ItemList({ initialItems, currentUser }: { initialItems: 
           )}
       </div>
 
-      {/* === NOVÝ PANEL BOXU (ZOBRAZÍ SE JEN POKUD JE VYBRÁN BOX) === */}
-      {selectedBox && boxStats && (
-        <div className="bg-slate-800 text-white rounded-2xl p-4 mb-4 shadow-xl animate-in slide-in-from-top-2">
-            <div className="flex items-center gap-3 mb-3">
-                <div className="w-10 h-10 bg-slate-700 rounded-lg flex items-center justify-center shrink-0">
-                    <Box className="w-6 h-6 text-blue-400" />
-                </div>
-                <div>
-                    <h2 className="text-lg font-black leading-tight">Box {selectedBox}</h2>
-                    <p className="text-xs text-slate-400 font-medium">
-                        Celkem {boxStats.totalItems} položek • {boxStats.availableItemsCount} dostupných
-                    </p>
-                </div>
-            </div>
-            
-            <div className="grid grid-cols-2 gap-3">
-                {/* Tlačítko PŮJČIT CELÝ BOX */}
-                <button 
-                    onClick={handleBorrowEntireBox}
-                    disabled={boxStats.availableItemsCount === 0}
-                    className="bg-blue-600 hover:bg-blue-500 disabled:bg-slate-700 disabled:text-slate-500 disabled:cursor-not-allowed text-white py-3 px-2 rounded-xl flex flex-col items-center justify-center gap-1 transition-all active:scale-95 shadow-lg shadow-blue-900/20"
-                >
-                    <PackageOpen className="w-5 h-5" />
-                    <span className="text-xs font-bold uppercase text-center">Půjčit vše</span>
-                </button>
-
-                {/* Tlačítko VRÁTIT CELÝ BOX */}
-                <button 
-                    onClick={handleReturnEntireBox}
-                    disabled={boxStats.myBorrowedItemsCount === 0}
-                    className="bg-orange-600 hover:bg-orange-500 disabled:bg-slate-700 disabled:text-slate-500 disabled:cursor-not-allowed text-white py-3 px-2 rounded-xl flex flex-col items-center justify-center gap-1 transition-all active:scale-95 shadow-lg shadow-orange-900/20"
-                >
-                    <Undo2 className="w-5 h-5" />
-                    <span className="text-xs font-bold uppercase text-center">Vrátit vše</span>
-                </button>
-            </div>
-            
-            {boxStats.myBorrowedItemsCount > 0 && (
-                <p className="text-center text-[10px] text-orange-300 font-bold mt-3 uppercase tracking-wide">
-                    Máš půjčeno: {boxStats.myBorrowedItemsCount} položek z tohoto boxu
-                </p>
-            )}
-        </div>
-      )}
-
-      {/* SEZNAM POLOŽEK */}
       <div className="space-y-3 pb-20 pt-2">
-        {/* ... zbytek seznamu zůstává beze změn ... */}
         {sortedItems.map((item) => {
           const isExpanded = expandedId === item.id.toString();
           const isEditing = editingId === item.id.toString();
-          
-          const totalBorrowed = item.loans.reduce((a,b)=>a+b.quantity,0);
-          const myLoan = item.loans.find(l => l.borrower_name.toLowerCase() === currentUser.toLowerCase());
-          const myLoanQty = myLoan ? myLoan.quantity : 0;
 
           const borderClass = isExpanded 
             ? "border-blue-500 ring-4 ring-blue-500/10 z-10 relative shadow-xl scale-[1.02]" 
@@ -348,7 +236,6 @@ export default function ItemList({ initialItems, currentUser }: { initialItems: 
                             <h3 className="font-bold text-slate-800 leading-tight truncate pr-2">{item.name}</h3>
                             <div className="flex gap-2 mt-1 items-center">
                                 <span className={`text-xs font-bold ${item.quantity > 0 ? 'text-slate-500' : 'text-red-500'}`}>Skladem: {item.quantity} ks</span>
-                                {totalBorrowed > 0 && (<span className="text-[10px] bg-orange-100 text-orange-700 px-1.5 py-0.5 rounded-md font-bold flex items-center whitespace-nowrap">Půjčeno {totalBorrowed}</span>)}
                             </div>
                         </>
                     )}
@@ -382,15 +269,18 @@ export default function ItemList({ initialItems, currentUser }: { initialItems: 
                             <button onClick={() => updateAmountByButton(1)} className="w-12 h-12 bg-slate-50 rounded-xl flex items-center justify-center border border-slate-200 active:scale-90 transition-transform hover:bg-slate-100"><Plus className="w-5 h-5 text-slate-600" /></button>
                         </div>
                     )}
+                    
                     {!isEditing && (
-                        <div className="grid grid-cols-4 gap-2 mb-4">
-                            <button onClick={() => handleAction('add', item.id.toString(), item.name)} className="flex flex-col items-center justify-center gap-1 bg-emerald-50 border-2 border-emerald-100 hover:bg-emerald-100 text-emerald-700 p-2 rounded-xl transition-colors active:scale-95"><Plus className="w-5 h-5 stroke-[3px]" /><span className="text-[9px] font-black uppercase">Přidat</span></button>
-                            <button onClick={() => handleAction('remove', item.id.toString(), item.name)} disabled={item.quantity < (typeof amount === 'string' ? 0 : amount)} className="flex flex-col items-center justify-center gap-1 bg-rose-50 border-2 border-rose-100 hover:bg-rose-100 text-rose-700 p-2 rounded-xl transition-colors active:scale-95 disabled:opacity-50 disabled:grayscale"><Minus className="w-5 h-5 stroke-[3px]" /><span className="text-[9px] font-black uppercase">Ubrat</span></button>
-                            <button onClick={() => handleAction('borrow', item.id.toString(), item.name)} disabled={item.quantity < (typeof amount === 'string' ? 0 : amount)} className="flex flex-col items-center justify-center gap-1 bg-orange-50 border-2 border-orange-100 hover:bg-orange-100 text-orange-600 p-2 rounded-xl transition-colors active:scale-95 disabled:opacity-50 disabled:grayscale"><ArrowUpRight className="w-5 h-5 stroke-[3px]" /><span className="text-[9px] font-black uppercase">Půjčit</span></button>
-                            <button onClick={() => handleAction('return', item.id.toString(), item.name)} disabled={myLoanQty < (typeof amount === 'string' ? 0 : amount)} className="flex flex-col items-center justify-center gap-1 bg-blue-50 border-2 border-blue-100 hover:bg-blue-100 text-blue-600 p-2 rounded-xl transition-colors active:scale-95 disabled:opacity-50 disabled:grayscale"><ArrowDownLeft className="w-5 h-5 stroke-[3px]" /><span className="text-[9px] font-black uppercase">Vrátit</span></button>
+                        <div className="grid grid-cols-3 gap-2 mb-4">
+                            <button onClick={() => handleAction('add', item.id.toString(), item.name)} className="flex flex-col items-center justify-center gap-1 bg-emerald-50 border-2 border-emerald-100 hover:bg-emerald-100 text-emerald-700 p-2 rounded-xl transition-colors active:scale-95"><Plus className="w-5 h-5 stroke-[3px]" /><span className="text-[9px] font-black uppercase">Přidat ks</span></button>
+                            <button onClick={() => handleAction('remove', item.id.toString(), item.name)} disabled={item.quantity < (typeof amount === 'string' ? 0 : amount)} className="flex flex-col items-center justify-center gap-1 bg-rose-50 border-2 border-rose-100 hover:bg-rose-100 text-rose-700 p-2 rounded-xl transition-colors active:scale-95 disabled:opacity-50 disabled:grayscale"><Minus className="w-5 h-5 stroke-[3px]" /><span className="text-[9px] font-black uppercase">Ubrat ks</span></button>
+                            
+                            {/* Tlačítko pro úplné smazání položky (místo původního půjčování) */}
+                            <button onClick={() => handleDelete(item.id.toString(), item.name)} className="flex flex-col items-center justify-center gap-1 bg-red-50 border-2 border-red-100 hover:bg-red-100 text-red-600 p-2 rounded-xl transition-colors active:scale-95"><Trash2 className="w-5 h-5 stroke-[3px]" /><span className="text-[9px] font-black uppercase">Smazat věc</span></button>
                         </div>
                     )}
-                    <div className="mb-4">
+
+                    <div className="mb-2">
                         {isEditing ? (
                             <div className="animate-in fade-in slide-in-from-top-1">
                                 <label className="text-[10px] font-bold text-slate-400 uppercase mb-1 block">Editace poznámky</label>
@@ -402,25 +292,17 @@ export default function ItemList({ initialItems, currentUser }: { initialItems: 
                             )
                         )}
                     </div>
-                    {!isEditing && item.loans.length > 0 && (
-                        <div className="bg-slate-50 rounded-xl p-3 border border-slate-100 mb-4">
-                            <h4 className="text-[10px] font-bold text-slate-400 uppercase mb-2">Aktuální výpůjčky</h4>
-                            <div className="flex flex-wrap gap-2">
-                                {item.loans.map(loan => {
-                                    const isMe = loan.borrower_name.toLowerCase() === currentUser.toLowerCase();
-                                    return (
-                                        <button key={loan.id} type="button" onClick={() => { if (isMe) setAmount(loan.quantity); }} disabled={!isMe} title={isMe ? "Kliknutím nastavíš toto množství" : "Cizí výpůjčka"} className={`flex items-center gap-1.5 px-2 py-1 rounded-md text-xs font-bold border transition-all ${isMe ? 'bg-blue-100 text-blue-800 border-blue-200 hover:bg-blue-200 hover:border-blue-300 cursor-pointer active:scale-90' : 'bg-white text-slate-400 border-slate-100 cursor-default opacity-80'}`}><User className="w-3 h-3" />{loan.borrower_name}: {loan.quantity}ks</button>
-                                    )
-                                })}
-                            </div>
-                            <p className="text-[10px] text-slate-400 mt-2 font-medium italic">Tip: Kliknutím na Tvou jmenovku rychle nastavíš počet kusů.</p>
-                        </div>
-                    )}
                 </div>
               )}
             </div>
           );
         })}
+
+        {sortedItems.length === 0 && (
+            <div className="text-center py-10 text-slate-400 font-medium animate-in fade-in">
+                Nic se nenašlo 👻
+            </div>
+        )}
       </div>
     </div>
   );
