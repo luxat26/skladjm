@@ -1,10 +1,6 @@
 import { createServerClient } from '@supabase/ssr'
 import { cookies } from 'next/headers'
 
-/**
- * Vytvoří Supabase klienta pro použití v Server Components a Actions.
- * Automaticky spravuje cookies pro autentizaci.
- */
 export async function createClient() {
   const cookieStore = await cookies()
 
@@ -16,15 +12,13 @@ export async function createClient() {
         getAll() {
           return cookieStore.getAll()
         },
-        setAll(cookiesToSet) {
-          try {
-            cookiesToSet.forEach(({ name, value, options }) =>
-              cookieStore.set(name, value, options)
-            )
-          } catch {
-            // Middleware se postará o mutace, pokud voláme z RSC
-          }
+        setAll() {
+          // U domácí appky cookies neřešíme, auth jsme zrušili
         },
+      },
+      // Nasměrování do našeho nového domácího schématu!
+      db: {
+        schema: 'jm',
       },
     }
   )
